@@ -167,14 +167,12 @@ const spokenInput = document.getElementById("spokenInput");
 const descInput = document.getElementById("descInput");
 const combineBtn = document.getElementById("combineBtn");
 const clearBtn = document.getElementById("clearBtn");
-const output = document.getElementById("output");
 const statusText = document.getElementById("statusText");
 const downloadBtn = document.getElementById("downloadBtn");
 const downloadLink = document.getElementById("downloadLink");
-const copyBtn = document.getElementById("copyBtn");
 
 function updateButtonState() {
-  combineBtn.disabled = !(spokenInput.files && spokenInput.files[0] && descInput.files && descInput.files[0]);
+  combineBtn.disabled = !(spokenInput.files && spokenInput.files.length > 0 && descInput.files && descInput.files.length > 0);
 }
 
 spokenInput.addEventListener("change", updateButtonState);
@@ -183,34 +181,82 @@ descInput.addEventListener("change", updateButtonState);
 clearBtn.addEventListener("click", () => {
   spokenInput.value = "";
   descInput.value = "";
-  output.value = "";
   statusText.textContent = "";
   downloadBtn.disabled = true;
-  copyBtn.disabled = true;
+  downloadLink.removeAttribute("href");
+  downloadLink.setAttribute("download", "combined_transcript.txt");
+  downloadBtn.textContent = "Download";
   updateButtonState();
 });
 
 combineBtn.addEventListener("click", async () => {
   statusText.textContent = "Combining...";
   try {
-    const [spokenText, descText] = await Promise.all([
-      spokenInput.files[0].text(),
-      descInput.files[0].text(),
-    ]);
+    // Build maps by YTP id from spoken and descriptive uploads
+    const spokenFiles = Array.from(spokenInput.files);
+    const descFiles = Array.from(descInput.files);
 
-    const result = combineTranscripts(spokenText, descText);
-    output.value = result;
-    statusText.textContent = `Done (${new Blob([result]).size} bytes)`;
+    const spokenEntries = await Promise.all(spokenFiles.map(async f => {
+      const content = await f.text();
+      const id = extractYtpId(f.name) || extractYtpId(content);
+      return { id, file: f, content };
+    }));
 
-    // Prepare download link
-    const blob = new Blob([result], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    downloadLink.href = url;
-    const suggestedName = buildOutputFilename(spokenInput.files[0].name || "", spokenText);
-    downloadLink.download = suggestedName;
-    downloadBtn.textContent = `Download ${suggestedName}`;
-    downloadBtn.disabled = !result;
-    copyBtn.disabled = !result;
+    const descEntries = await Promise.all(descFiles.map(async f => {
+      const content = await f.text();
+      const id = extractYtpId(f.name) || extractYtpId(content);
+      return { id, file: f, content };
+    }));
+
+    // Index descriptive by id for quick lookup
+    const idToDesc = new Map();
+    for (const d of descEntries) {
+      if (!d.id) continue;
+      if (!idToDesc.has(d.id)) idToDesc.set(d.id, []);
+      idToDesc.get(d.id).push(d);
+    }
+
+    // For each spoken entry with an id, find matching descriptive entry(s)
+    const outputs = [];
+    for (const s of spokenEntries) {
+      if (!s.id) continue; // skip if cannot determine id
+      const matches = idToDesc.get(s.id) || [];
+      if (matches.length === 0) continue;
+      // Combine with the first match (or all if multiple?)
+      for (const m of matches) {
+        const result = combineTranscripts(s.content, m.content);
+        const name = `${s.id}_Descriptive_Transcript.txt`;
+        outputs.push({ name, content: result });
+      }
+    }
+
+    if (outputs.length === 0) {
+      statusText.textContent = "No matching pairs by YTP ID.";
+      downloadBtn.disabled = true;
+      downloadLink.removeAttribute("href");
+      return;
+    }
+
+    if (outputs.length === 1) {
+      // Single file: provide direct download
+      const { name, content } = outputs[0];
+      const blob = new Blob([content], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      downloadLink.href = url;
+      downloadLink.download = name;
+      downloadBtn.textContent = `Download ${name}`;
+      downloadBtn.disabled = false;
+      statusText.textContent = `Ready: 1 file`;
+    } else {
+      // Multiple files: build a zip on the fly
+      const zipBlob = await buildZip(outputs);
+      const url = URL.createObjectURL(zipBlob);
+      downloadLink.href = url;
+      downloadLink.download = `Narrava_Combined_${outputs.length}_files.zip`;
+      downloadBtn.textContent = `Download ${outputs.length} files (ZIP)`;
+      downloadBtn.disabled = false;
+      statusText.textContent = `Ready: ${outputs.length} files`;
+    }
   } catch (e) {
     console.error(e);
     statusText.textContent = "Failed to combine.";
@@ -241,6 +287,138 @@ function extractYtpId(s) {
   const digits = match[1];
   const letter = match[2] ? match[2].toLowerCase() : "";
   return `YTP26-${digits}${letter}`;
+}
+
+/* Minimal ZIP builder (no deps) */
+async function buildZip(files) {
+  // files: [{ name, content }]
+  // Implement a simple ZIP using the ZIP file format.
+  // This is a small, dependency-free implementation suitable for plain text files.
+
+  const encoder = new TextEncoder();
+  const writer = new ZipWriter();
+  for (const f of files) {
+    const data = encoder.encode(f.content);
+    writer.addFile(f.name, data);
+  }
+  return new Blob([writer.toUint8Array()], { type: "application/zip" });
+}
+
+class ZipWriter {
+  constructor() {
+    this.files = [];
+    this.centralDirectory = [];
+    this.offset = 0;
+    this.chunks = [];
+  }
+
+  /* CRC32 */
+  static crc32(buf) {
+    let c = ~0;
+    for (let i = 0; i < buf.length; i++) {
+      c ^= buf[i];
+      for (let k = 0; k < 8; k++) {
+        c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      }
+    }
+    return ~c >>> 0;
+  }
+
+  addFile(name, data) {
+    const nameBytes = new TextEncoder().encode(name);
+    const crc = ZipWriter.crc32(data);
+    const size = data.length;
+    const modTime = this._dosTime(new Date());
+    const modDate = this._dosDate(new Date());
+
+    // Local file header
+    const localHeader = new DataView(new ArrayBuffer(30));
+    let p = 0;
+    localHeader.setUint32(p, 0x04034b50, true); p += 4; // signature
+    localHeader.setUint16(p, 20, true); p += 2;         // version needed
+    localHeader.setUint16(p, 0, true); p += 2;          // flags
+    localHeader.setUint16(p, 0, true); p += 2;          // compression (0 = store)
+    localHeader.setUint16(p, modTime, true); p += 2;    // file mod time
+    localHeader.setUint16(p, modDate, true); p += 2;    // file mod date
+    localHeader.setUint32(p, crc, true); p += 4;        // crc32
+    localHeader.setUint32(p, size, true); p += 4;       // compressed size
+    localHeader.setUint32(p, size, true); p += 4;       // uncompressed size
+    localHeader.setUint16(p, nameBytes.length, true); p += 2; // file name length
+    localHeader.setUint16(p, 0, true); p += 2;                // extra length
+
+    this._push(new Uint8Array(localHeader.buffer));
+    this._push(nameBytes);
+    this._push(data);
+
+    const localHeaderOffset = this.offset;
+    this.offset += localHeader.byteLength + nameBytes.length + size;
+
+    // Central directory header
+    const central = new DataView(new ArrayBuffer(46));
+    p = 0;
+    central.setUint32(p, 0x02014b50, true); p += 4; // signature
+    central.setUint16(p, 20, true); p += 2;         // version made by
+    central.setUint16(p, 20, true); p += 2;         // version needed
+    central.setUint16(p, 0, true); p += 2;          // flags
+    central.setUint16(p, 0, true); p += 2;          // compression
+    central.setUint16(p, modTime, true); p += 2;    // mod time
+    central.setUint16(p, modDate, true); p += 2;    // mod date
+    central.setUint32(p, crc, true); p += 4;
+    central.setUint32(p, size, true); p += 4;
+    central.setUint32(p, size, true); p += 4;
+    central.setUint16(p, nameBytes.length, true); p += 2;
+    central.setUint16(p, 0, true); p += 2; // extra len
+    central.setUint16(p, 0, true); p += 2; // comment len
+    central.setUint16(p, 0, true); p += 2; // disk number
+    central.setUint16(p, 0, true); p += 2; // internal attrs
+    central.setUint32(p, 0, true); p += 4; // external attrs
+    central.setUint32(p, localHeaderOffset, true); p += 4; // local header offset
+
+    this.centralDirectory.push({ header: new Uint8Array(central.buffer), nameBytes });
+  }
+
+  toUint8Array() {
+    const centralStart = this.offset;
+    for (const entry of this.centralDirectory) {
+      this._push(entry.header);
+      this._push(entry.nameBytes);
+      this.offset += entry.header.byteLength + entry.nameBytes.length;
+    }
+    const centralSize = this.offset - centralStart;
+
+    // End of central directory
+    const end = new DataView(new ArrayBuffer(22));
+    let p = 0;
+    end.setUint32(p, 0x06054b50, true); p += 4; // signature
+    end.setUint16(p, 0, true); p += 2; // disk number
+    end.setUint16(p, 0, true); p += 2; // start disk
+    end.setUint16(p, this.centralDirectory.length, true); p += 2;
+    end.setUint16(p, this.centralDirectory.length, true); p += 2;
+    end.setUint32(p, centralSize, true); p += 4;
+    end.setUint32(p, centralStart, true); p += 4;
+    end.setUint16(p, 0, true); p += 2; // comment length
+
+    this._push(new Uint8Array(end.buffer));
+
+    // Concatenate all chunks
+    let total = 0;
+    for (const c of this.chunks) total += c.length;
+    const result = new Uint8Array(total);
+    let pos = 0;
+    for (const c of this.chunks) { result.set(c, pos); pos += c.length; }
+    return result;
+  }
+
+  _push(u8) {
+    this.chunks.push(u8);
+  }
+
+  _dosTime(d) {
+    return (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() / 2) & 0x1f;
+  }
+  _dosDate(d) {
+    return (((d.getFullYear() - 1980) & 0x7f) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+  }
 }
 
 

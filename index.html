@@ -32,32 +32,24 @@
       <div class="row">
         <div class="field">
           <label for="spokenInput">Standard Captions (SRT File)</label>
-          <input id="spokenInput" type="file" accept=".srt,text/srt,text/plain" />
+          <input id="spokenInput" type="file" accept=".srt,text/srt,text/plain" multiple />
         </div>
         <div class="field">
           <label for="descInput">Descriptive Captions (SRT)</label>
-          <input id="descInput" type="file" accept=".srt,text/srt,text/plain" />
+          <input id="descInput" type="file" accept=".srt,text/srt,text/plain" multiple />
         </div>
       </div>
 
       <div class="actions">
         <button id="combineBtn" disabled>Combine transcripts</button>
         <button id="clearBtn" class="secondary">Clear</button>
+        <a id="downloadLink" class="download" download="combined_transcript.txt">
+          <button id="downloadBtn" disabled>Download</button>
+        </a>
         <span class="hint" id="statusText"></span>
       </div>
 
-      <div class="field" style="margin-top:12px;">
-        <label for="output">Combined transcript (plain text)</label>
-        <textarea id="output" placeholder="Output will appear here..." spellcheck="false"></textarea>
-        <div class="footer">
-          <div class="actions">
-            <a id="downloadLink" class="download" download="combined_transcript.txt">
-              <button id="downloadBtn" disabled>Download</button>
-            </a>
-            <button id="copyBtn" class="secondary" disabled>Copy</button>
-          </div>
-        </div>
-      </div>
+      
     </div>
 
     <script src="./script.js"></script>
