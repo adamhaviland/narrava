@@ -10,6 +10,9 @@
       h1 { margin: 0 0 8px; font-weight: 650; font-size: 22px; }
       p.desc { margin: 0 0 16px; color: #666; }
       .card { max-width: 980px; margin: 0 auto; background: rgba(0,0,0,0.03); padding: 16px; border-radius: 10px; }
+      .header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+      .brand-text { flex: 1; min-width: 0; }
+      .hero-gif { max-width: 220px; height: auto; border-radius: 10px; display: block; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
       .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 12px; }
       .field { background: white; color: #111; padding: 12px; border-radius: 8px; border: 1px solid rgba(0,0,0,0.1); }
       label { display: block; font-weight: 600; margin-bottom: 6px; }
@@ -26,8 +29,13 @@
   </head>
   <body>
     <div class="card">
-      <h1>Narrava: The Transcript Combiner</h1>
-      <p class="desc">Upload a spoken captions SRT and a descriptive captions SRT. The tool will merge them into a plain-text transcript per the specified rules.</p>
+      <div class="header">
+        <div class="brand-text">
+          <h1>Narrava: The Transcript Combiner</h1>
+          <p class="desc">Upload a spoken captions SRT and a descriptive captions SRT. The tool will merge them into a plain-text transcript per the specified rules.</p>
+        </div>
+        <img src="./assets/Josh_Schmidt.GIF" alt="Narrava demo" class="hero-gif" />
+      </div>
 
       <div class="row">
         <div class="field">

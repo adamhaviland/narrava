@@ -259,17 +259,7 @@ combineBtn.addEventListener("click", async () => {
     }
   } catch (e) {
     console.error(e);
-    statusText.textContent = "Failed to combine.";
-  }
-});
-
-copyBtn.addEventListener("click", async () => {
-  if (!output.value) return;
-  try {
-    await navigator.clipboard.writeText(output.value);
-    statusText.textContent = "Copied to clipboard.";
-  } catch (e) {
-    statusText.textContent = "Copy failed.";
+    statusText.textContent = `Failed to combine: ${e && e.message ? e.message : e}`;
   }
 });
 
@@ -414,10 +404,16 @@ class ZipWriter {
   }
 
   _dosTime(d) {
-    return (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() / 2) & 0x1f;
+    const hours = d.getHours() & 0x1f;       // 0-23
+    const minutes = d.getMinutes() & 0x3f;   // 0-59
+    const seconds2 = Math.floor(d.getSeconds() / 2) & 0x1f; // seconds/2
+    return (hours << 11) | (minutes << 5) | seconds2;
   }
   _dosDate(d) {
-    return (((d.getFullYear() - 1980) & 0x7f) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+    const year = (d.getFullYear() - 1980) & 0x7f; // years since 1980
+    const month = (d.getMonth() + 1) & 0x0f;      // 1-12
+    const day = d.getDate() & 0x1f;               // 1-31
+    return (year << 9) | (month << 5) | day;
   }
 }
 
